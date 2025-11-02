@@ -29,6 +29,10 @@ ALLOW_DOWNLOAD_VIA_PROXY = os.getenv('ALLOW_DOWNLOAD_VIA_PROXY', 'false').strip(
 # اگر روی هاستی هستید که outbound محدود است (مثل PythonAnywhere Free)، دانلود محلی را غیرفعال کنید
 DIRECT_SEND_ONLY = os.getenv('DIRECT_SEND_ONLY', 'false').strip().lower() in ('1','true','yes','on')
 
+# پشتیبانی از کوکی‌ها برای yt-dlp (برای عبور از age-gate یا نیاز به لاگین)
+YTDLP_COOKIES = os.getenv('YTDLP_COOKIES', '').strip()  # مسیر فایل کوکی به فرمت Netscape
+YTDLP_COOKIE_HEADER = os.getenv('YTDLP_COOKIE_HEADER', '').strip()  # رشته Cookie آماده (اختیاری)
+
 # محدودیت حجم فایل (MB) - برای جلوگیری از OOM در render.com
 MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))  # پیش‌فرض 500MB
 
@@ -231,23 +235,48 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         else:
             video_format = 'best[height<=720]/best'
         
+        # ساخت هدرهای پویا بر اساس دامنه لینک
+        parsed = urlparse(url)
+        origin_url = f"{parsed.scheme}://{parsed.netloc}"
+        base_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Referer': url,
+            'Origin': origin_url,
+        }
+        # اگر کوکی هدر داده شده، اضافه کن (برای عبور از age-gate و 404 های ساختگی)
+        if YTDLP_COOKIE_HEADER:
+            base_headers['Cookie'] = YTDLP_COOKIE_HEADER
+        # تنظیمات ویژه برای xhamster
+        if 'xhamster' in parsed.netloc:
+            base_headers.update({
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Dest': 'video',
+                'Pragma': 'no-cache',
+                'Cache-Control': 'no-cache',
+            })
+
         ydl_opts_info = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'noplaylist': True,
+            'user_agent': base_headers['User-Agent'],
             'socket_timeout': 30,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            },
+            'http_headers': base_headers,
+            'extractor_retries': 3,
+            'source_address': '0.0.0.0',
         }
+        # اگر فایل کوکی به فرمت Netscape موجود است، به yt-dlp بده
+        if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
+            ydl_opts_info['cookiefile'] = YTDLP_COOKIES
         
         if PROXY_URL and ALLOW_DOWNLOAD_VIA_PROXY:
             ydl_opts_info['proxy'] = PROXY_URL
@@ -272,27 +301,28 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
                 return None, f"❌ حجم ویدیو ({filesize_mb:.0f} MB) از حد مجاز ({MAX_FILE_SIZE_MB} MB) بیشتر است", 0
         
         # تنظیمات دانلود
+        # اولویت mp4 برای کاهش مشکلات HLS (404)
+        video_format_pref = f"best[ext=mp4][height<=720]/best[ext=mp4]/{video_format}"
         ydl_opts = {
-            'format': video_format,
+            'format': video_format_pref,
             'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'noplaylist': True,
+            'user_agent': base_headers['User-Agent'],
             'socket_timeout': 30,
-            'retries': 3,
-            'fragment_retries': 3,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            },
+            'retries': 5,
+            'fragment_retries': 10,
+            'concurrent_fragment_downloads': 1,
+            'http_headers': base_headers,
+            'extractor_retries': 3,
+            'source_address': '0.0.0.0',
+            'merge_output_format': 'mp4',
         }
+        if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
+            ydl_opts['cookiefile'] = YTDLP_COOKIES
         
         if PROXY_URL and ALLOW_DOWNLOAD_VIA_PROXY:
             ydl_opts['proxy'] = PROXY_URL
@@ -309,6 +339,27 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         except asyncio.TimeoutError:
             cleanup_partial_files()
             return None, "❌ خطا: زمان دانلود ویدیو تمام شد (بیش از 10 دقیقه)", 0
+        except Exception as dl_e:
+            # تلاش مجدد با فرمت محافظه‌کارانه برای xhamster در صورت 404
+            if 'xhamster' in parsed.netloc and ('404' in str(dl_e) or 'HTTP Error 404' in str(dl_e)):
+                try:
+                    fallback_opts = dict(ydl_opts)
+                    fallback_opts['format'] = 'best[ext=mp4]/best'
+                    info = await asyncio.wait_for(
+                        loop.run_in_executor(executor, _download_video_sync, url, fallback_opts),
+                        timeout=600
+                    )
+                except Exception as dl_e2:
+                    cleanup_partial_files()
+                    return None, f"❌ خطا در دانلود ویدیو: {str(dl_e2)}", 0
+            else:
+                cleanup_partial_files()
+                # پیام راهنما برای xhamster در خطای 404
+                if 'xhamster' in parsed.netloc and ('404' in str(dl_e) or 'HTTP Error 404' in str(dl_e)):
+                    hint = "\nℹ️ راهنما: برای xhamster ممکن است نیاز به کوکی مرورگر باشد. متغیرهای YTDLP_COOKIES یا YTDLP_COOKIE_HEADER را تنظیم کنید."
+                else:
+                    hint = ''
+                return None, f"❌ خطا در دانلود ویدیو: {str(dl_e)}{hint}", 0
         
         # پیدا کردن فایل دانلود شده
         if 'requested_downloads' in info and info['requested_downloads']:
