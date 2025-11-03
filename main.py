@@ -122,9 +122,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Eporner, HQporner, Beeg, YourPorn\n"
         "• PornTrex, YouJizz, Motherless, YouPorn\n"
         "• و بیش از 1000 سایت دیگر!\n\n"
+        "🎞️ دانلود GIF:\n"
+        "• Gfycat, Redgifs\n"
+        "• myteenwebcam.com, thefapp.com\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "• هر لینک دانلود مستقیم\n\n"
         "📹 ویدیوها به صورت ویدیو\n"
+        "🎞️ GIF به صورت Animation\n"
         "📄 سایر فایل‌ها به صورت سند\n\n"
         "برای شروع، یک لینک ارسال کنید!"
     )
@@ -138,6 +142,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎬 دانلود از سایت‌های ویدیویی:\n"
         "فقط لینک صفحه ویدیو را ارسال کنید\n"
         "مثال: https://www.youtube.com/watch?v=...\n\n"
+        "🎞️ دانلود GIF:\n"
+        "لینک صفحه GIF را ارسال کنید\n"
+        "مثال: https://myteenwebcam.com/thefapp/watch/134194\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "لینک دانلود مستقیم فایل را ارسال کنید\n"
         "مثال: https://example.com/file.zip\n\n"
@@ -209,6 +216,7 @@ def is_video_site(url: str) -> bool:
         'xhamster.com', 'spankbang.com', 'eporner.com', 'youporn.com',
         'porn300.com', 'xgroovy.com', 'pornone.com', 'txxx.com',
         'hqporner.com', 'upornia.com', 'porntrex.com', 'thumbzilla.com',
+        'myteenwebcam.com', 'thefapp.com', 'gfycat.com', 'redgifs.com',
         'twitter.com', 'x.com', 'instagram.com', 'tiktok.com',
         'facebook.com', 'twitch.tv', 'reddit.com',
         'beeg.com', 'yourporn.sexy', 'xmoviesforyou.com', 'porngo.com',
@@ -255,6 +263,11 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         
         # ساخت هدرهای پویا بر اساس دامنه لینک
         parsed = urlparse(url)
+        
+        # برای سایت‌های GIF، اولویت با GIF است
+        is_gif_site = any(site in parsed.netloc for site in ['gfycat', 'redgifs', 'myteenwebcam', 'thefapp'])
+        if is_gif_site:
+            video_format = 'best[ext=gif]/best[ext=mp4]/best'
         origin_url = f"{parsed.scheme}://{parsed.netloc}"
         base_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -360,8 +373,12 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             'http_headers': base_headers,
             'extractor_retries': 3,
             'source_address': '0.0.0.0',
-            'merge_output_format': 'mp4',
         }
+        
+        # فقط برای ویدیو merge به mp4 کن، نه GIF
+        if not is_gif_site:
+            ydl_opts['merge_output_format'] = 'mp4'
+        
         if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
             ydl_opts['cookiefile'] = YTDLP_COOKIES
         
@@ -426,7 +443,20 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             os.remove(filepath)
             return None, f"❌ حجم فایل دانلود شده ({file_size_mb:.0f} MB) از حد مجاز ({MAX_FILE_SIZE_MB} MB) بیشتر است", 0
         
-        return filepath, 'video/mp4', file_size
+        # تشخیص نوع فایل بر اساس پسوند
+        file_ext = os.path.splitext(filepath)[1].lower()
+        if file_ext == '.gif':
+            content_type = 'image/gif'
+        elif file_ext == '.webm':
+            content_type = 'video/webm'
+        elif file_ext in ['.mp4', '.m4v']:
+            content_type = 'video/mp4'
+        elif file_ext in ['.mkv', '.avi', '.mov']:
+            content_type = 'video/mp4'  # تلگرام به mp4 تبدیل می‌کند
+        else:
+            content_type = 'video/mp4'  # پیش‌فرض
+        
+        return filepath, content_type, file_size
     
     except Exception as e:
         logger.error(f"خطا در دانلود ویدیو با yt-dlp: {e}")
@@ -683,7 +713,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # دریافت chat_id از update
                     chat_id = update.message.chat_id
                     
-                    if is_video_file(filepath, content_type):
+                    if content_type == 'image/gif':
+                        # ارسال GIF به عنوان Animation
+                        await client.send_animation(
+                            chat_id=chat_id,
+                            animation=filepath,
+                            caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB"
+                        )
+                    elif is_video_file(filepath, content_type):
                         # ارسال ویدیو
                         await client.send_video(
                             chat_id=chat_id,
@@ -709,7 +746,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # استفاده از Bot API معمولی برای فایل‌های کوچک (زیر 50MB)
             with open(filepath, 'rb') as f:
-                if is_video_file(filepath, content_type):
+                if content_type == 'image/gif':
+                    # ارسال GIF به عنوان Animation
+                    await update.message.reply_animation(
+                        animation=f,
+                        caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB",
+                        read_timeout=300,
+                        write_timeout=300,
+                        connect_timeout=30,
+                        pool_timeout=30
+                    )
+                elif is_video_file(filepath, content_type):
                     # ارسال به صورت ویدیو
                     await update.message.reply_video(
                         video=f,
