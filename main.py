@@ -123,8 +123,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• PornTrex, YouJizz, Motherless, YouPorn\n"
         "• و بیش از 1000 سایت دیگر!\n\n"
         "🎞️ دانلود GIF:\n"
-        "• Gfycat, Redgifs\n"
-        "• myteenwebcam.com, xgroovy.com\n\n"
+        "• Gfycat, Redgifs, xgroovy.com\n"
+        "• xgifer.com, hentaigifz.com, hardcoregify.com\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "• هر لینک دانلود مستقیم\n\n"
         "📹 ویدیوها به صورت ویدیو\n"
@@ -144,7 +144,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "مثال: https://www.youtube.com/watch?v=...\n\n"
         "🎞️ دانلود GIF:\n"
         "لینک صفحه GIF را ارسال کنید\n"
-        "مثال: https://xgroovy.com/gifs/610250/...\n\n"
+        "مثال: https://xgifer.com/gif/...\n"
+        "مثال: https://hentaigifz.com/...\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "لینک دانلود مستقیم فایل را ارسال کنید\n"
         "مثال: https://example.com/file.zip\n\n"
@@ -217,6 +218,7 @@ def is_video_site(url: str) -> bool:
         'porn300.com', 'xgroovy.com', 'pornone.com', 'txxx.com',
         'hqporner.com', 'upornia.com', 'porntrex.com', 'thumbzilla.com',
         'myteenwebcam.com', 'thefapp.com', 'gfycat.com', 'redgifs.com',
+        'xgifer.com', 'hentaigifz.com', 'hardcoregify.com',
         'twitter.com', 'x.com', 'instagram.com', 'tiktok.com',
         'facebook.com', 'twitch.tv', 'reddit.com',
         'beeg.com', 'yourporn.sexy', 'xmoviesforyou.com', 'porngo.com',
@@ -265,7 +267,10 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         parsed = urlparse(url)
         
         # برای سایت‌های GIF، اولویت با GIF است
-        is_gif_site = any(site in parsed.netloc for site in ['gfycat', 'redgifs', 'myteenwebcam', 'thefapp', 'xgroovy'])
+        is_gif_site = any(site in parsed.netloc for site in [
+            'gfycat', 'redgifs', 'myteenwebcam', 'thefapp', 'xgroovy',
+            'xgifer', 'hentaigifz', 'hardcoregify'
+        ])
         if is_gif_site:
             video_format = 'best[ext=gif]/best[ext=mp4]/best'
         origin_url = f"{parsed.scheme}://{parsed.netloc}"

@@ -11,8 +11,8 @@
   - و بیش از 1000 سایت دیگر!
 - 🎞️ **دانلود GIF** از سایت‌های GIF:
   - Gfycat, Redgifs
-  - myteenwebcam.com, thefapp.com
-  - xgroovy.com
+  - myteenwebcam.com, xgroovy.com
+  - xgifer.com, hentaigifz.com, hardcoregify.com
   - و سایت‌های دیگر
 - 📥 **دانلود فایل مستقیم** از هر لینک
 - 📹 ارسال ویدیوها به صورت ویدیو
@@ -101,6 +101,9 @@ PROXY_URL=http://proxy.server:3128
 ```
 ارسال لینک: https://myteenwebcam.com/thefapp/watch/134194
 ارسال لینک: https://xgroovy.com/gifs/610250/horny-step-siblings-get-interrupted-while-banging/
+ارسال لینک: https://xgifer.com/gif/omg-lil-bro-your-cock-is-huge/
+ارسال لینک: https://hentaigifz.com/sex-with-two-sisters/
+ارسال لینک: https://hardcoregify.com/gif/sister-got-drunk/
 ارسال لینک: https://gfycat.com/...
 ارسال لینک: https://redgifs.com/watch/...
 ```
