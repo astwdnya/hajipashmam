@@ -12,6 +12,7 @@
 - 🎞️ **دانلود GIF** از سایت‌های GIF:
   - Gfycat, Redgifs
   - myteenwebcam.com, thefapp.com
+  - xgroovy.com
   - و سایت‌های دیگر
 - 📥 **دانلود فایل مستقیم** از هر لینک
 - 📹 ارسال ویدیوها به صورت ویدیو
@@ -99,6 +100,7 @@ PROXY_URL=http://proxy.server:3128
 ### دانلود GIF
 ```
 ارسال لینک: https://myteenwebcam.com/thefapp/watch/134194
+ارسال لینک: https://xgroovy.com/gifs/610250/horny-step-siblings-get-interrupted-while-banging/
 ارسال لینک: https://gfycat.com/...
 ارسال لینک: https://redgifs.com/watch/...
 ```

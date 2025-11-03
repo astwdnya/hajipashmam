@@ -124,7 +124,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• و بیش از 1000 سایت دیگر!\n\n"
         "🎞️ دانلود GIF:\n"
         "• Gfycat, Redgifs\n"
-        "• myteenwebcam.com, thefapp.com\n\n"
+        "• myteenwebcam.com, xgroovy.com\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "• هر لینک دانلود مستقیم\n\n"
         "📹 ویدیوها به صورت ویدیو\n"
@@ -144,7 +144,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "مثال: https://www.youtube.com/watch?v=...\n\n"
         "🎞️ دانلود GIF:\n"
         "لینک صفحه GIF را ارسال کنید\n"
-        "مثال: https://myteenwebcam.com/thefapp/watch/134194\n\n"
+        "مثال: https://xgroovy.com/gifs/610250/...\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "لینک دانلود مستقیم فایل را ارسال کنید\n"
         "مثال: https://example.com/file.zip\n\n"
@@ -265,7 +265,7 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         parsed = urlparse(url)
         
         # برای سایت‌های GIF، اولویت با GIF است
-        is_gif_site = any(site in parsed.netloc for site in ['gfycat', 'redgifs', 'myteenwebcam', 'thefapp'])
+        is_gif_site = any(site in parsed.netloc for site in ['gfycat', 'redgifs', 'myteenwebcam', 'thefapp', 'xgroovy'])
         if is_gif_site:
             video_format = 'best[ext=gif]/best[ext=mp4]/best'
         origin_url = f"{parsed.scheme}://{parsed.netloc}"
