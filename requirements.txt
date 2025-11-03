@@ -13,3 +13,11 @@ telegram
 yt-dlp
 pyrogram
 tgcrypto
+flask
+gunicorn
+pyrogram
+python-dotenv
+python-telegram-bot
+requests
+tgcrypto
+yt-dlp

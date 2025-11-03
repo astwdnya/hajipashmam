@@ -43,6 +43,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# غیرفعال کردن لاگ‌های حساس که ممکن است توکن را لو دهند
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 # توکن ربات تلگرام از فایل .env (بدون مقدار پیش‌فرض برای امنیت)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 API_ID = os.getenv('API_ID')
@@ -112,8 +117,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "من یک ربات دانلود و ارسال فایل هستم.\n\n"
         "🎬 دانلود از سایت‌های ویدیویی:\n"
         "• YouTube, Vimeo, Dailymotion\n"
-        "• Pornhub, Xvideos, Xnxx\n"
-        "• Twitter, Instagram, TikTok\n"
+        "• Reddit (شامل NSFW), Twitter, Instagram, TikTok\n"
+        "• Pornhub, Xvideos, Xnxx, SpankBang\n"
+        "• Eporner, HQporner, Beeg, YourPorn\n"
+        "• PornTrex, YouJizz, Motherless, YouPorn\n"
         "• و بیش از 1000 سایت دیگر!\n\n"
         "📥 دانلود فایل مستقیم:\n"
         "• هر لینک دانلود مستقیم\n\n"
@@ -203,7 +210,18 @@ def is_video_site(url: str) -> bool:
         'porn300.com', 'xgroovy.com', 'pornone.com', 'txxx.com',
         'hqporner.com', 'upornia.com', 'porntrex.com', 'thumbzilla.com',
         'twitter.com', 'x.com', 'instagram.com', 'tiktok.com',
-        'facebook.com', 'twitch.tv', 'reddit.com'
+        'facebook.com', 'twitch.tv', 'reddit.com',
+        'beeg.com', 'yourporn.sexy', 'xmoviesforyou.com', 'porngo.com',
+        'youjizz.com', 'motherless.com', '3movs.com', 'tube8.com',
+        'porndig.com', 'cumlouder.com', 'porndoe.com', 'pornhat.com',
+        'ok.xxx', 'porn00.com', 'pornhoarder.com', 'pornhits.com',
+        'pornhd3x.com', 'xxxfiles.com', 'tnaflix.com', 'porndish.com',
+        'fullporner.com', 'porn4days.com', 'whoreshub.com', 'paradisehill.com',
+        'trendyporn.com', 'pornhd8k.com', 'xfreehd.com', 'perfectgirls.com',
+        'yourdailypornvideos.com', 'anysex.com', 'erome.com', 'vxxx.com',
+        'veporn.com', 'drtuber.com', 'netfapx.com', 'letsjerk.com',
+        'pornobae.com', 'pornmz.com', 'xmegadrive.com', 'hitprn.com',
+        'czechvideo.com', 'joysporn.com'
     ]
     url_lower = url.lower()
     return any(site in url_lower for site in video_sites)
@@ -261,6 +279,20 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
                 'Pragma': 'no-cache',
                 'Cache-Control': 'no-cache',
             })
+        
+        # تنظیمات ویژه برای Reddit (رفع خطای 403)
+        is_reddit = 'reddit.com' in parsed.netloc
+        if is_reddit:
+            base_headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1',
+            })
 
         ydl_opts_info = {
             'quiet': True,
@@ -271,9 +303,18 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             'user_agent': base_headers['User-Agent'],
             'socket_timeout': 30,
             'http_headers': base_headers,
-            'extractor_retries': 3,
+            'extractor_retries': 5,
             'source_address': '0.0.0.0',
+            'prefer_insecure': False,
         }
+        
+        # تنظیمات اضافی برای Reddit
+        if is_reddit:
+            ydl_opts_info['extractor_args'] = {
+                'reddit': {
+                    'sort': 'best',
+                }
+            }
         # اگر فایل کوکی به فرمت Netscape موجود است، به yt-dlp بده
         if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
             ydl_opts_info['cookiefile'] = YTDLP_COOKIES
