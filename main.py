@@ -35,7 +35,7 @@ YTDLP_COOKIES = os.getenv('YTDLP_COOKIES', '').strip()  # مسیر فایل کو
 YTDLP_COOKIE_HEADER = os.getenv('YTDLP_COOKIE_HEADER', '').strip()  # رشته Cookie آماده (اختیاری)
 
 # محدودیت حجم فایل (MB) - برای جلوگیری از OOM در render.com
-MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))  # پیش‌فرض 500MB
+MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '2000'))  # پیش‌فرض 2000MB (2GB)
 
 # آیدی ادمین
 ADMIN_ID = 818185073
