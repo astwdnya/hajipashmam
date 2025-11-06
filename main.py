@@ -1254,13 +1254,16 @@ def main():
     
     # اضافه کردن job برای چک روزانه لینک‌های در حال انقضا
     job_queue = application.job_queue
-    # هر 24 ساعت یکبار چک کن
-    job_queue.run_repeating(
-        lambda context: asyncio.create_task(check_and_notify_expiring_links(context.bot)),
-        interval=86400,  # 24 ساعت
-        first=10  # اولین اجرا 10 ثانیه بعد از استارت
-    )
-    print("⏰ زمان‌بند چک روزانه لینک‌ها فعال شد")
+    if job_queue is not None:
+        # هر 24 ساعت یکبار چک کن
+        job_queue.run_repeating(
+            lambda context: asyncio.create_task(check_and_notify_expiring_links(context.bot)),
+            interval=86400,  # 24 ساعت
+            first=10  # اولین اجرا 10 ثانیه بعد از استارت
+        )
+        print("⏰ زمان‌بند چک روزانه لینک‌ها فعال شد")
+    else:
+        print("⚠️ JobQueue در دسترس نیست. برای فعال‌سازی، python-telegram-bot[job-queue] را نصب کنید.")
     
     # شروع ربات
     print("🤖 ربات در حال اجرا است...")
