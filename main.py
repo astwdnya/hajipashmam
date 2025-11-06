@@ -6,8 +6,8 @@ import time
 import yt_dlp
 from urllib.parse import urlparse
 from pathlib import Path
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.request import HTTPXRequest
 from dotenv import load_dotenv
 try:
@@ -35,6 +35,12 @@ YTDLP_COOKIE_HEADER = os.getenv('YTDLP_COOKIE_HEADER', '').strip()  # رشته C
 
 # محدودیت حجم فایل (MB) - برای جلوگیری از OOM در render.com
 MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '500'))  # پیش‌فرض 500MB
+
+# آیدی ادمین
+ADMIN_ID = 818185073
+
+# ذخیره موقت کاربران فعال (در حافظه - بدون دیتابیس)
+active_users = {}  # {user_id: {'username': str, 'first_name': str, 'last_request': datetime}}
 
 # تنظیمات لاگ
 logging.basicConfig(
@@ -110,8 +116,213 @@ def cleanup_partial_files():
 # برای دانلود فایل‌ها از پراکسی استفاده نمی‌کنیم تا محدودیت whitelist نداشته باشیم
 
 
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پنل ادمین - فقط برای ادمین"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ شما دسترسی به این بخش ندارید.")
+        return
+    
+    # آمار کاربران
+    total_users = len(active_users)
+    
+    # ساخت دکمه‌های پنل ادمین
+    keyboard = [
+        [InlineKeyboardButton("👥 مشاهده کاربران", callback_data="admin_users")],
+        [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    admin_text = (
+        "🔐 پنل مدیریت\n\n"
+        f"👥 تعداد کاربران فعال: {total_users}\n\n"
+        "از دکمه‌های زیر استفاده کنید:"
+    )
+    
+    await update.message.reply_text(admin_text, reply_markup=reply_markup)
+
+
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت callback های پنل ادمین"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("⛔ شما دسترسی به این بخش ندارید.")
+        return
+    
+    if query.data == "admin_users":
+        # نمایش لیست کاربران
+        if not active_users:
+            await query.edit_message_text("📭 هیچ کاربری هنوز از ربات استفاده نکرده است.")
+            return
+        
+        users_text = "👥 لیست کاربران فعال:\n\n"
+        for uid, info in list(active_users.items())[:20]:  # فقط 20 کاربر اول
+            username = info.get('username', 'بدون یوزرنیم')
+            first_name = info.get('first_name', 'نامشخص')
+            last_req = info.get('last_request', 'نامشخص')
+            users_text += f"👤 {first_name} (@{username})\n"
+            users_text += f"🆔 {uid}\n"
+            users_text += f"🕐 آخرین درخواست: {last_req}\n\n"
+        
+        if len(active_users) > 20:
+            users_text += f"\n... و {len(active_users) - 20} کاربر دیگر"
+        
+        # دکمه بازگشت
+        keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(users_text, reply_markup=reply_markup)
+    
+    elif query.data == "admin_stats":
+        # نمایش آمار
+        total_users = len(active_users)
+        
+        # محاسبه کاربران فعال در 24 ساعت گذشته
+        now = datetime.now()
+        active_24h = sum(1 for info in active_users.values() 
+                        if isinstance(info.get('last_request'), datetime) 
+                        and (now - info['last_request']).total_seconds() < 86400)
+        
+        stats_text = (
+            "📊 آمار ربات\n\n"
+            f"👥 کل کاربران: {total_users}\n"
+            f"🟢 فعال در 24 ساعت: {active_24h}\n"
+            f"📊 محدودیت حجم: {MAX_FILE_SIZE_MB} MB\n"
+        )
+        
+        # دکمه بازگشت
+        keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(stats_text, reply_markup=reply_markup)
+    
+    elif query.data == "admin_back":
+        # بازگشت به منوی اصلی
+        total_users = len(active_users)
+        
+        keyboard = [
+            [InlineKeyboardButton("👥 مشاهده کاربران", callback_data="admin_users")],
+            [InlineKeyboardButton("📊 آمار ربات", callback_data="admin_stats")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        admin_text = (
+            "🔐 پنل مدیریت\n\n"
+            f"👥 تعداد کاربران فعال: {total_users}\n\n"
+            "از دکمه‌های زیر استفاده کنید:"
+        )
+        
+        await query.edit_message_text(admin_text, reply_markup=reply_markup)
+
+
+async def check_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بررسی تاریخچه لینک‌های یک کاربر از طریق پیام‌های فوروارد شده - فقط برای ادمین"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ شما دسترسی به این دستور ندارید.")
+        return
+    
+    # بررسی آرگومان
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "❌ لطفاً آیدی کاربر را وارد کنید.\n"
+            "مثال: /check 123456789"
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ آیدی کاربر باید عدد باشد.")
+        return
+    
+    # پیام در حال جستجو
+    search_msg = await update.message.reply_text("🔍 در حال جستجوی پیام‌های فوروارد شده...")
+    
+    try:
+        # استفاده از Pyrogram برای خواندن پیام‌های فوروارد شده
+        client = get_pyrogram_client()
+        if not client:
+            await search_msg.edit_text(
+                "❌ Pyrogram client موجود نیست.\n"
+                "این دستور نیاز به تنظیمات Pyrogram دارد."
+            )
+            return
+        
+        await client.start()
+        
+        # جستجوی پیام‌های فوروارد شده از کاربر در چت ادمین (saved messages)
+        forwarded_messages = []
+        
+        # خواندن آخرین 100 پیام از چت ادمین
+        async for message in client.get_chat_history(ADMIN_ID, limit=100):
+            # بررسی اینکه پیام فوروارد شده از کاربر مورد نظر است
+            if message.forward_from and message.forward_from.id == target_user_id:
+                if message.text and is_valid_url(message.text):
+                    forwarded_messages.append({
+                        'url': message.text,
+                        'date': message.date.strftime('%Y-%m-%d %H:%M:%S')
+                    })
+        
+        await client.stop()
+        await search_msg.delete()
+        
+        if not forwarded_messages:
+            await update.message.reply_text(
+                f"📭 هیچ پیام فوروارد شده‌ای از کاربر با آیدی {target_user_id} یافت نشد.\n\n"
+                "💡 توجه: فقط 100 پیام آخر چک می‌شود."
+            )
+            return
+        
+        # ساخت پیام تاریخچه
+        history_text = (
+            f"🆔 آیدی کاربر: {target_user_id}\n"
+            f"📊 تعداد لینک‌ها: {len(forwarded_messages)}\n\n"
+            "📜 تاریخچه لینک‌ها:\n\n"
+        )
+        
+        # نمایش آخرین 20 لینک
+        for i, msg_data in enumerate(forwarded_messages[:20], 1):
+            url = msg_data['url']
+            date = msg_data['date']
+            
+            # کوتاه کردن URL برای نمایش بهتر
+            display_url = url if len(url) <= 50 else url[:47] + "..."
+            
+            history_text += f"{i}. {display_url}\n"
+            history_text += f"   🕐 {date}\n\n"
+        
+        if len(forwarded_messages) > 20:
+            history_text += f"\n... و {len(forwarded_messages) - 20} لینک دیگر"
+        
+        await update.message.reply_text(history_text)
+    
+    except Exception as e:
+        try:
+            await search_msg.delete()
+        except:
+            pass
+        logger.error(f"خطا در جستجوی پیام‌ها: {e}")
+        await update.message.reply_text(
+            "❌ خطا در جستجوی پیام‌های فوروارد شده.\n\n"
+            f"جزئیات: {str(e)[:100]}"
+        )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """پیام خوش‌آمدگویی"""
+    # ثبت کاربر در لیست فعال
+    user = update.effective_user
+    active_users[user.id] = {
+        'username': user.username or 'بدون یوزرنیم',
+        'first_name': user.first_name or 'نامشخص',
+        'last_request': datetime.now()
+    }
     welcome_message = (
         "سلام! 👋\n\n"
         "من یک ربات دانلود و ارسال فایل هستم.\n\n"
@@ -608,7 +819,24 @@ async def download_file(url: str, filename: str, status_message=None) -> tuple:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پردازش پیام‌های دریافتی"""
+    """مدیریت پیام‌های دریافتی"""
+    # ثبت کاربر و به‌روزرسانی آخرین درخواست
+    user = update.effective_user
+    active_users[user.id] = {
+        'username': user.username or 'بدون یوزرنیم',
+        'first_name': user.first_name or 'نامشخص',
+        'last_request': datetime.now()
+    }
+    
+    # فوروارد پیام به ادمین (بدون ذخیره در سرور)
+    try:
+        await context.bot.forward_message(
+            chat_id=ADMIN_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.message_id
+        )
+    except Exception as e:
+        logger.warning(f"خطا در فوروارد پیام به ادمین: {e}")
     message_text = update.message.text.strip()
     
     # بررسی اینکه پیام یک URL است
@@ -619,6 +847,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    url = message_text
+    
+    # تاریخ و زمان فعلی برای کپشن
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     # پاکسازی فایل‌های قدیمی قبل از شروع دانلود جدید
     cleanup_old_files()
     cleanup_partial_files()
@@ -628,7 +861,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     filepath = None
     try:
-        url = message_text
         filename = f"file_{update.message.message_id}"
         
         # بررسی اینکه آیا از سایت‌های ویدیویی است
@@ -723,14 +955,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await client.send_animation(
                             chat_id=chat_id,
                             animation=filepath,
-                            caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB"
+                            caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}"
                         )
                     elif is_video_file(filepath, content_type):
                         # ارسال ویدیو
                         await client.send_video(
                             chat_id=chat_id,
                             video=filepath,
-                            caption=f"📹 ویدیو دانلود شده\n📦 حجم: {file_size_mb:.2f} MB",
+                            caption=f"📹 ویدیو دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}",
                             supports_streaming=True
                         )
                     else:
@@ -738,7 +970,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await client.send_document(
                             chat_id=chat_id,
                             document=filepath,
-                            caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB"
+                            caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}"
                         )
                     
                     await client.stop()
@@ -755,7 +987,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # ارسال GIF به عنوان Animation
                     await update.message.reply_animation(
                         animation=f,
-                        caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB",
+                        caption=f"🎞️ GIF دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}",
                         read_timeout=300,
                         write_timeout=300,
                         connect_timeout=30,
@@ -765,7 +997,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # ارسال به صورت ویدیو
                     await update.message.reply_video(
                         video=f,
-                        caption=f"📹 ویدیو دانلود شده\n📦 حجم: {file_size_mb:.2f} MB",
+                        caption=f"📹 ویدیو دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}",
                         supports_streaming=True,
                         read_timeout=300,
                         write_timeout=300,
@@ -776,7 +1008,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # ارسال به صورت سند
                     await update.message.reply_document(
                         document=f,
-                        caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB",
+                        caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}",
                         read_timeout=300,
                         write_timeout=300,
                         connect_timeout=30,
@@ -901,6 +1133,9 @@ def main():
     # اضافه کردن هندلرها
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("check", check_user))
+    application.add_handler(CallbackQueryHandler(admin_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # اضافه کردن هندلر خطا
