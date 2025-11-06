@@ -18,6 +18,7 @@ import asyncio
 import glob
 import concurrent.futures
 from datetime import datetime, timedelta
+from telegram.constants import ParseMode
 
 # بارگذاری متغیرهای محیطی از فایل .env
 load_dotenv()
@@ -219,8 +220,150 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(admin_text, reply_markup=reply_markup)
 
 
+def save_user_link(user_id: int, url: str, timestamp: str):
+    """ذخیره لینک کاربر در فایل متنی"""
+    try:
+        log_file = os.path.join(DOWNLOAD_FOLDER, 'user_links.txt')
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{user_id}|{url}|{timestamp}\n")
+    except Exception as e:
+        logger.error(f"خطا در ذخیره لینک: {e}")
+
+
+def get_user_links(user_id: int):
+    """خواندن لینک‌های یک کاربر از فایل"""
+    try:
+        log_file = os.path.join(DOWNLOAD_FOLDER, 'user_links.txt')
+        if not os.path.exists(log_file):
+            return []
+        
+        user_links = []
+        with open(log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) == 3:
+                    uid, url, timestamp = parts
+                    if int(uid) == user_id:
+                        user_links.append({
+                            'url': url,
+                            'date': timestamp
+                        })
+        return user_links
+    except Exception as e:
+        logger.error(f"خطا در خواندن لینک‌ها: {e}")
+        return []
+
+
+async def check_and_notify_expiring_links(bot):
+    """بررسی و ارسال هشدار برای لینک‌های نزدیک به حذف"""
+    try:
+        log_file = os.path.join(DOWNLOAD_FOLDER, 'user_links.txt')
+        if not os.path.exists(log_file):
+            return
+        
+        now = datetime.now()
+        warning_date = now - timedelta(days=29)  # 1 روز قبل از حذف (29 روز)
+        one_day_window = now - timedelta(days=28, hours=23)  # پنجره 1 ساعته
+        
+        # گروه‌بندی لینک‌ها بر اساس کاربر
+        user_expiring_links = {}
+        
+        with open(log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) == 3:
+                    uid, url, timestamp = parts
+                    try:
+                        link_date = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                        
+                        # بررسی اینکه لینک در بازه 29 روز تا 28 روز و 23 ساعت است
+                        if warning_date <= link_date <= one_day_window:
+                            user_id = int(uid)
+                            if user_id not in user_expiring_links:
+                                user_expiring_links[user_id] = []
+                            user_expiring_links[user_id].append({
+                                'url': url,
+                                'date': timestamp
+                            })
+                    except (ValueError, TypeError):
+                        continue
+        
+        # ارسال هشدار به ادمین برای هر کاربر
+        for user_id, links in user_expiring_links.items():
+            try:
+                # ساخت پیام هشدار
+                warning_text = (
+                    f"⚠️ هشدار حذف لینک‌ها\n\n"
+                    f"👤 کاربر: <a href='tg://user?id={user_id}'>{user_id}</a>\n"
+                    f"📊 تعداد لینک‌های در حال انقضا: {len(links)}\n"
+                    f"🗑️ زمان حذف: 24 ساعت دیگر\n\n"
+                    f"📜 لیست لینک‌ها:\n\n"
+                )
+                
+                for i, link_data in enumerate(links[:30], 1):  # حداکثر 30 لینک
+                    url = link_data['url']
+                    date = link_data['date']
+                    display_url = url if len(url) <= 50 else url[:47] + "..."
+                    warning_text += f"{i}. {display_url}\n   🕐 {date}\n\n"
+                
+                if len(links) > 30:
+                    warning_text += f"\n... و {len(links) - 30} لینک دیگر"
+                
+                # ارسال به ادمین
+                await bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=warning_text,
+                    parse_mode=ParseMode.HTML
+                )
+                logger.info(f"هشدار حذف برای کاربر {user_id} ارسال شد")
+                
+            except Exception as e:
+                logger.error(f"خطا در ارسال هشدار برای کاربر {user_id}: {e}")
+        
+    except Exception as e:
+        logger.error(f"خطا در بررسی لینک‌های در حال انقضا: {e}")
+
+
+def cleanup_old_links():
+    """حذف لینک‌های قدیمی‌تر از 1 ماه"""
+    try:
+        log_file = os.path.join(DOWNLOAD_FOLDER, 'user_links.txt')
+        if not os.path.exists(log_file):
+            return
+        
+        # خواندن همه لینک‌ها
+        valid_links = []
+        now = datetime.now()
+        one_month_ago = now - timedelta(days=30)
+        
+        with open(log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) == 3:
+                    uid, url, timestamp = parts
+                    try:
+                        # تبدیل timestamp به datetime
+                        link_date = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                        
+                        # فقط لینک‌های کمتر از 1 ماه را نگه دار
+                        if link_date > one_month_ago:
+                            valid_links.append(line.strip())
+                    except ValueError:
+                        # اگر فرمت تاریخ اشتباه بود، نگه دار
+                        valid_links.append(line.strip())
+        
+        # نوشتن لینک‌های معتبر به فایل
+        with open(log_file, 'w', encoding='utf-8') as f:
+            for link in valid_links:
+                f.write(link + '\n')
+        
+        logger.info(f"پاکسازی لینک‌های قدیمی: {len(valid_links)} لینک باقی ماند")
+    except Exception as e:
+        logger.error(f"خطا در پاکسازی لینک‌های قدیمی: {e}")
+
+
 async def check_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بررسی تاریخچه لینک‌های یک کاربر از طریق پیام‌های فوروارد شده - فقط برای ادمین"""
+    """بررسی تاریخچه لینک‌های یک کاربر - فقط برای ادمین"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
@@ -241,77 +384,37 @@ async def check_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ آیدی کاربر باید عدد باشد.")
         return
     
-    # پیام در حال جستجو
-    search_msg = await update.message.reply_text("🔍 در حال جستجوی پیام‌های فوروارد شده...")
+    # خواندن لینک‌های کاربر از فایل
+    user_links = get_user_links(target_user_id)
     
-    try:
-        # استفاده از Pyrogram برای خواندن پیام‌های فوروارد شده
-        client = get_pyrogram_client()
-        if not client:
-            await search_msg.edit_text(
-                "❌ Pyrogram client موجود نیست.\n"
-                "این دستور نیاز به تنظیمات Pyrogram دارد."
-            )
-            return
-        
-        await client.start()
-        
-        # جستجوی پیام‌های فوروارد شده از کاربر در چت ادمین (saved messages)
-        forwarded_messages = []
-        
-        # خواندن آخرین 100 پیام از چت ادمین
-        async for message in client.get_chat_history(ADMIN_ID, limit=100):
-            # بررسی اینکه پیام فوروارد شده از کاربر مورد نظر است
-            if message.forward_from and message.forward_from.id == target_user_id:
-                if message.text and is_valid_url(message.text):
-                    forwarded_messages.append({
-                        'url': message.text,
-                        'date': message.date.strftime('%Y-%m-%d %H:%M:%S')
-                    })
-        
-        await client.stop()
-        await search_msg.delete()
-        
-        if not forwarded_messages:
-            await update.message.reply_text(
-                f"📭 هیچ پیام فوروارد شده‌ای از کاربر با آیدی {target_user_id} یافت نشد.\n\n"
-                "💡 توجه: فقط 100 پیام آخر چک می‌شود."
-            )
-            return
-        
-        # ساخت پیام تاریخچه
-        history_text = (
-            f"🆔 آیدی کاربر: {target_user_id}\n"
-            f"📊 تعداد لینک‌ها: {len(forwarded_messages)}\n\n"
-            "📜 تاریخچه لینک‌ها:\n\n"
-        )
-        
-        # نمایش آخرین 20 لینک
-        for i, msg_data in enumerate(forwarded_messages[:20], 1):
-            url = msg_data['url']
-            date = msg_data['date']
-            
-            # کوتاه کردن URL برای نمایش بهتر
-            display_url = url if len(url) <= 50 else url[:47] + "..."
-            
-            history_text += f"{i}. {display_url}\n"
-            history_text += f"   🕐 {date}\n\n"
-        
-        if len(forwarded_messages) > 20:
-            history_text += f"\n... و {len(forwarded_messages) - 20} لینک دیگر"
-        
-        await update.message.reply_text(history_text)
-    
-    except Exception as e:
-        try:
-            await search_msg.delete()
-        except:
-            pass
-        logger.error(f"خطا در جستجوی پیام‌ها: {e}")
+    if not user_links:
         await update.message.reply_text(
-            "❌ خطا در جستجوی پیام‌های فوروارد شده.\n\n"
-            f"جزئیات: {str(e)[:100]}"
+            f"📭 هیچ لینکی از کاربر با آیدی {target_user_id} یافت نشد."
         )
+        return
+    
+    # ساخت پیام تاریخچه
+    history_text = (
+        f"🆔 آیدی کاربر: {target_user_id}\n"
+        f"📊 تعداد لینک‌ها: {len(user_links)}\n\n"
+        "📜 تاریخچه لینک‌ها:\n\n"
+    )
+    
+    # نمایش آخرین 20 لینک
+    for i, msg_data in enumerate(user_links[-20:], 1):
+        url = msg_data['url']
+        date = msg_data['date']
+        
+        # کوتاه کردن URL برای نمایش بهتر
+        display_url = url if len(url) <= 50 else url[:47] + "..."
+        
+        history_text += f"{i}. {display_url}\n"
+        history_text += f"   🕐 {date}\n\n"
+    
+    if len(user_links) > 20:
+        history_text += f"\n... و {len(user_links) - 20} لینک دیگر"
+    
+    await update.message.reply_text(history_text)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -852,6 +955,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تاریخ و زمان فعلی برای کپشن
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
+    # ذخیره لینک در فایل
+    save_user_link(user.id, url, current_time)
+    
     # پاکسازی فایل‌های قدیمی قبل از شروع دانلود جدید
     cleanup_old_files()
     cleanup_partial_files()
@@ -945,7 +1051,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 client = get_pyrogram_client()
                 if client:
-                    await client.start()
+                    # چک کردن اینکه آیا قبلاً متصل است
+                    if not client.is_connected:
+                        await client.start()
                     
                     # دریافت chat_id از update
                     chat_id = update.message.chat_id
@@ -973,7 +1081,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}"
                         )
                     
-                    await client.stop()
+                    # فقط اگر ما آن را start کردیم، stop کنیم
+                    if client.is_connected:
+                        await client.stop()
                     logger.info(f"فایل بزرگ {filepath} با Pyrogram ارسال شد")
                 else:
                     raise Exception("Pyrogram client موجود نیست")
@@ -1096,6 +1206,7 @@ def main():
     print("🧹 در حال پاکسازی فایل‌های قدیمی...")
     cleanup_old_files()
     cleanup_partial_files()
+    cleanup_old_links()
     print("✅ پاکسازی کامل شد")
     
     # شروع Flask server برای keep-alive (برای Render.com)
@@ -1140,6 +1251,16 @@ def main():
     
     # اضافه کردن هندلر خطا
     application.add_error_handler(error_handler)
+    
+    # اضافه کردن job برای چک روزانه لینک‌های در حال انقضا
+    job_queue = application.job_queue
+    # هر 24 ساعت یکبار چک کن
+    job_queue.run_repeating(
+        lambda context: asyncio.create_task(check_and_notify_expiring_links(context.bot)),
+        interval=86400,  # 24 ساعت
+        first=10  # اولین اجرا 10 ثانیه بعد از استارت
+    )
+    print("⏰ زمان‌بند چک روزانه لینک‌ها فعال شد")
     
     # شروع ربات
     print("🤖 ربات در حال اجرا است...")
