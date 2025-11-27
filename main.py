@@ -66,22 +66,40 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # ایجاد Pyrogram client برای فایل‌های بزرگ (بیشتر از 50MB)
 pyrogram_client = None
+pyrogram_client_lock = None
 
 # Executor برای اجرای کارهای blocking
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
-def get_pyrogram_client():
-    """ایجاد یا برگرداندن Pyrogram client"""
-    global pyrogram_client
-    if pyrogram_client is None and API_ID and API_HASH and BOT_TOKEN:
-        pyrogram_client = Client(
-            "file_downloader_bot",
-            api_id=int(API_ID),
-            api_hash=API_HASH,
-            bot_token=BOT_TOKEN,
-            workdir=DOWNLOAD_FOLDER
-        )
-    return pyrogram_client
+async def init_pyrogram_lock():
+    """Initialize the asyncio lock for Pyrogram client"""
+    global pyrogram_client_lock
+    if pyrogram_client_lock is None:
+        pyrogram_client_lock = asyncio.Lock()
+
+async def get_pyrogram_client():
+    """ایجاد یا برگرداندن Pyrogram client (thread-safe)"""
+    global pyrogram_client, pyrogram_client_lock
+    if not API_ID or not API_HASH or not BOT_TOKEN:
+        return None
+    
+    try:
+        if pyrogram_client_lock is None:
+            await init_pyrogram_lock()
+        
+        async with pyrogram_client_lock:
+            if pyrogram_client is None:
+                pyrogram_client = Client(
+                    "file_downloader_bot",
+                    api_id=int(API_ID),
+                    api_hash=API_HASH,
+                    bot_token=BOT_TOKEN,
+                    workdir=DOWNLOAD_FOLDER
+                )
+            return pyrogram_client
+    except Exception as e:
+        logger.error(f"خطا در ایجاد Pyrogram client: {e}")
+        return None
 
 def cleanup_old_files():
     """پاکسازی فایل‌های قدیمی از پوشه downloads"""
@@ -563,7 +581,11 @@ def _download_video_sync(url: str, ydl_opts: dict) -> dict:
 
 async def download_video_ytdlp(url: str, status_message=None) -> tuple:
     """دانلود ویدیو با yt-dlp از سایت‌های مختلف (async + non-blocking)"""
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
     try:
         # تنظیمات yt-dlp
@@ -862,7 +884,11 @@ def _check_file_size_sync(url: str) -> int:
 
 async def download_file(url: str, filename: str, status_message=None) -> tuple:
     """دانلود فایل از URL با نمایش پیشرفت (async + non-blocking)"""
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
     try:
         proxies = {'http': PROXY_URL, 'https': PROXY_URL} if (PROXY_URL and ALLOW_DOWNLOAD_VIA_PROXY) else None
@@ -1049,11 +1075,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             try:
-                client = get_pyrogram_client()
+                client = await get_pyrogram_client()
                 if client:
                     # چک کردن اینکه آیا قبلاً متصل است
-                    if not client.is_connected:
-                        await client.start()
+                    try:
+                        if not client.is_connected:
+                            await asyncio.wait_for(client.start(), timeout=30)
+                    except (AttributeError, asyncio.TimeoutError):
+                        logger.warning("نتوانستند ارتباط Pyrogram client را بررسی کنید")
                     
                     # دریافت chat_id از update
                     chat_id = update.message.chat_id
@@ -1081,9 +1110,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             caption=f"📄 فایل دانلود شده\n📦 حجم: {file_size_mb:.2f} MB\n🕐 {current_time}"
                         )
                     
-                    # فقط اگر ما آن را start کردیم، stop کنیم
-                    if client.is_connected:
-                        await client.stop()
+                    # فقط اگر ما آن را start کردیم, stop کنیم
+                    try:
+                        if hasattr(client, 'is_connected') and client.is_connected:
+                            await asyncio.wait_for(client.stop(), timeout=10)
+                    except (AttributeError, asyncio.TimeoutError):
+                        logger.warning("نتوانستند Pyrogram client را بسته کنید")
                     logger.info(f"فایل بزرگ {filepath} با Pyrogram ارسال شد")
                 else:
                     raise Exception("Pyrogram client موجود نیست")
@@ -1252,18 +1284,25 @@ def main():
     # اضافه کردن هندلر خطا
     application.add_error_handler(error_handler)
     
-    # اضافه کردن job برای چک روزانه لینک‌های در حال انقضا
+    # اضافه کردن job برای چک روزانه لینک‌های در حال انقضاء
+    async def safe_check_expiring_links(context):
+        """اجرای امن چک لینک‌ها با مدیریت خطا"""
+        try:
+            await check_and_notify_expiring_links(context.bot)
+        except Exception as e:
+            logger.error(f"خطا در job چک لینک‌ها: {e}")
+    
     job_queue = application.job_queue
     if job_queue is not None:
         # هر 24 ساعت یکبار چک کن
         job_queue.run_repeating(
-            lambda context: asyncio.create_task(check_and_notify_expiring_links(context.bot)),
+            safe_check_expiring_links,
             interval=86400,  # 24 ساعت
             first=10  # اولین اجرا 10 ثانیه بعد از استارت
         )
-        print("⏰ زمان‌بند چک روزانه لینک‌ها فعال شد")
+        print("⛰ زمان‌بند چک روزانه لینک‌ها فعال شد")
     else:
-        print("⚠️ JobQueue در دسترس نیست. برای فعال‌سازی، python-telegram-bot[job-queue] را نصب کنید.")
+        print("⚠️ JobQueue در دسترس نیست. برای فعال‌سازی, python-telegram-bot[job-queue] را نصب کنید.")
     
     # شروع ربات
     print("🤖 ربات در حال اجرا است...")
