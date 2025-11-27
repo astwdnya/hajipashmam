@@ -627,11 +627,16 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
         # تنظیمات ویژه برای xhamster
         if 'xhamster' in parsed.netloc:
             base_headers.update({
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'cors',
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
                 'Sec-Fetch-Dest': 'video',
-                'Pragma': 'no-cache',
-                'Cache-Control': 'no-cache',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin',
             })
         
         # تنظیمات ویژه برای Reddit (رفع خطای 403)
@@ -660,14 +665,27 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             'extractor_retries': 5,
             'source_address': '0.0.0.0',
             'prefer_insecure': False,
+            'skip_unavailable_fragments': True,
         }
+        
+        # برای xhamster: disable SSL verification
+        if 'xhamster' in parsed.netloc:
+            ydl_opts_info['check_certificates'] = False
+        
+        # تنظیمات اضافی برای xhamster
+        if 'xhamster' in parsed.netloc:
+            ydl_opts_info['extractor_args'] = {
+                'xhamster': {
+                    'skip_dl': False,
+                }
+            }
         
         # تنظیمات اضافی برای Reddit
         if is_reddit:
-            ydl_opts_info['extractor_args'] = {
-                'reddit': {
-                    'sort': 'best',
-                }
+            if 'extractor_args' not in ydl_opts_info:
+                ydl_opts_info['extractor_args'] = {}
+            ydl_opts_info['extractor_args']['reddit'] = {
+                'sort': 'best',
             }
         # اگر فایل کوکی به فرمت Netscape موجود است، به yt-dlp بده
         if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
@@ -714,11 +732,21 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             'http_headers': base_headers,
             'extractor_retries': 3,
             'source_address': '0.0.0.0',
+            'skip_unavailable_fragments': True,
+            'check_certificates': False,
         }
         
-        # فقط برای ویدیو merge به mp4 کن، نه GIF
+        # فقط برای ویدیو merge به mp4 کن, نه GIF
         if not is_gif_site:
             ydl_opts['merge_output_format'] = 'mp4'
+        
+        # تنظیمات اضافی برای xhamster
+        if 'xhamster' in parsed.netloc:
+            ydl_opts['extractor_args'] = {
+                'xhamster': {
+                    'skip_dl': False,
+                }
+            }
         
         if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
             ydl_opts['cookiefile'] = YTDLP_COOKIES
@@ -739,18 +767,31 @@ async def download_video_ytdlp(url: str, status_message=None) -> tuple:
             cleanup_partial_files()
             return None, "❌ خطا: زمان دانلود ویدیو تمام شد (بیش از 10 دقیقه)", 0
         except Exception as dl_e:
-            # تلاش مجدد با فرمت محافظه‌کارانه برای xhamster در صورت 404
+            # تلاش مجدد با فرمت‌های مختلف برای xhamster در صورت 404
             if 'xhamster' in parsed.netloc and ('404' in str(dl_e) or 'HTTP Error 404' in str(dl_e)):
-                try:
-                    fallback_opts = dict(ydl_opts)
-                    fallback_opts['format'] = 'best[ext=mp4]/best'
-                    info = await asyncio.wait_for(
-                        loop.run_in_executor(executor, _download_video_sync, url, fallback_opts),
-                        timeout=600
-                    )
-                except Exception as dl_e2:
+                fallback_formats = [
+                    'best[ext=mp4]/best',
+                    'best/best',
+                    'bestvideo+bestaudio/best',
+                    'worst'
+                ]
+                
+                for fallback_format in fallback_formats:
+                    try:
+                        fallback_opts = dict(ydl_opts)
+                        fallback_opts['format'] = fallback_format
+                        fallback_opts['socket_timeout'] = 30
+                        fallback_opts['retries'] = 3
+                        info = await asyncio.wait_for(
+                            loop.run_in_executor(executor, _download_video_sync, url, fallback_opts),
+                            timeout=600
+                        )
+                        break
+                    except Exception:
+                        continue
+                else:
                     cleanup_partial_files()
-                    return None, f"❌ خطا در دانلود ویدیو: {str(dl_e2)}", 0
+                    return None, f"❌ خطا در دانلود ویدیو: {str(dl_e)}", 0
             else:
                 cleanup_partial_files()
                 # پیام راهنما برای xhamster در خطای 404
