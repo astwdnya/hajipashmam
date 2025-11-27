@@ -1,9 +1,9 @@
 python-telegram-bot[job-queue]==21.9
 requests>=2.32.2
-python-dotenv==1.0.0
-flask==3.0.0
-gunicorn==21.2.0
-yt-dlp>=2025.1.0
-telegram
-pyrogram
-tgcrypto
+python-dotenv==1.0.1
+flask==3.1.0
+gunicorn==23.0.0
+yt-dlp==2025.11.12        # آخرین نسخه پایدار تا امروز (27 نوامبر 2025)
+telegram==0.0.1           # فقط اگر واقعاً نیاز داری (معمولاً لازم نیست)
+pyrogram==2.0.106
+tgcrypto==1.2.5
